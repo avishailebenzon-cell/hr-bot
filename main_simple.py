@@ -4,7 +4,7 @@ Simple Telegram bot - polling mode (no database needed for initial testing)
 import logging
 import os
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from services.wellness_service import WellnessService
 
 # Setup logging
@@ -186,6 +186,48 @@ async def wellness_create_new(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"❌ שגיאה ביצירת התוכנית: {str(e)}"
         )
 
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle free-form text messages - forward to wellness Q&A if wellness is available"""
+    global wellness_file_id
+
+    if not update.message or not update.message.text:
+        return
+
+    question = update.message.text
+    user_id = update.effective_user.id
+
+    # Only process if wellness service is available
+    if not wellness_service or not wellness_file_id:
+        await update.message.reply_text(
+            "💚 שלום! נתקלתי בבעיה בטעינת שירות הרווחה.\n\n"
+            "בינתיים, אתה יכול להשתמש בפקודות:\n"
+            "/wellness_info - לשאול שאלה\n"
+            "/wellness_reminders - לראות פעילויות קרובות"
+        )
+        return
+
+    try:
+        await update.message.reply_text("⏳ מעבד את השאלה שלך...")
+
+        answer = await wellness_service.answer_question(
+            question=question,
+            file_id=wellness_file_id,
+            context=f"User ID: {user_id}"
+        )
+
+        await update.message.reply_text(
+            f"💚 <b>תשובה:</b>\n\n{answer}",
+            parse_mode="HTML"
+        )
+        logger.info(f"User {user_id} asked: {question[:50]}...")
+
+    except Exception as e:
+        logger.error(f"Error processing message: {str(e)}")
+        await update.message.reply_text(
+            f"❌ שגיאה בעיבוד: {str(e)}\n\n"
+            f"בדוק שהשירות עובד במלואו."
+        )
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command"""
     await update.message.reply_html(
@@ -195,7 +237,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/schedule_meeting &lt;email&gt; - תאם פגישה\n"
         "/wellness_info &lt;שאלה&gt; - שאל על תוכנית הרווחה\n"
         "/wellness_reminders - הצג פעילויות קרובות\n"
-        "/wellness_create_new &lt;שנה&gt; &lt;שינויים&gt; - צור תוכנית חדשה\n"
+        "/wellness_create_new &lt;שנה&gt; &lt;שינויים&gt; - צור תוכנית חדשה\n\n"
+        "<b>או פשוט כתוב הודעה חופשית - אשלח אותה ל-Claude! 💬</b>\n\n"
         "/help - הצג הודעה זו"
     )
 
@@ -240,6 +283,8 @@ def main() -> None:
     application.add_handler(CommandHandler("wellness_reminders", wellness_reminders))
     application.add_handler(CommandHandler("wellness_create_new", wellness_create_new))
     application.add_handler(CommandHandler("help", help_command))
+    # Handle free-form text messages
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("🚀 הבוט מתחיל בפולינג...")
     logger.info("מחכה להודעות...")
