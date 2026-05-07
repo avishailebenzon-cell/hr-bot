@@ -1,51 +1,62 @@
 """
-Wellness Plan RAG Service - File management and Claude Files API integration
+Wellness Plan RAG Service - Read Excel file and provide Q&A via Claude
 """
 import logging
-import base64
 from datetime import datetime
 from typing import Optional
 from anthropic import Anthropic
+from openpyxl import load_workbook
 
 logger = logging.getLogger(__name__)
 
 
 class WellnessService:
-    """Handles wellness plan file management and Q&A via Claude Files API."""
+    """Handles wellness plan file management and Q&A via Claude."""
 
     def __init__(self, api_key: str):
         """Initialize Anthropic client."""
         self.client = Anthropic(api_key=api_key)
         self.model = "claude-3-5-sonnet-20241022"
-        self.file_cache = {}  # {filename: {"file_content": bytes, "uploaded_at": datetime}}
-        self.file_content = None  # Store file as base64 for Q&A
+        self.file_cache = {}
+        self.file_text = None  # Store file content as formatted text
 
     async def upload_file(self, file_path: str) -> str:
         """
-        Load Excel file and store as base64 for Claude API.
+        Load Excel file and convert to formatted text.
 
         Args:
             file_path: Path to the Excel file (e.g., wellness_plan_2026.xlsx)
 
         Returns:
-            file_id: Dummy file ID (we store file as base64 instead)
+            file_id: Filename (used as identifier)
         """
         try:
-            with open(file_path, "rb") as f:
-                file_content = f.read()
-                file_name = file_path.split("/")[-1]
+            file_name = file_path.split("/")[-1]
+            wb = load_workbook(file_path)
 
-                # Store file content as base64
-                self.file_content = base64.standard_b64encode(file_content).decode("utf-8")
+            # Convert all sheets to formatted text
+            text_content = []
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                text_content.append(f"\n{'='*60}")
+                text_content.append(f"Sheet: {sheet_name}")
+                text_content.append(f"{'='*60}\n")
 
-                self.file_cache[file_name] = {
-                    "uploaded_at": datetime.now().isoformat(),
-                    "path": file_path,
-                    "size": len(file_content),
-                }
+                # Add table header and rows
+                for row in ws.iter_rows(values_only=True):
+                    if any(cell is not None for cell in row):
+                        text_content.append(" | ".join(str(cell or "") for cell in row))
 
-                logger.info(f"✅ Loaded wellness file: {file_name} (Size: {len(file_content)} bytes)")
-                return file_name  # Return filename as ID
+            self.file_text = "\n".join(text_content)
+
+            self.file_cache[file_name] = {
+                "uploaded_at": datetime.now().isoformat(),
+                "path": file_path,
+                "size": len(self.file_text),
+            }
+
+            logger.info(f"✅ Loaded wellness file: {file_name}")
+            return file_name
 
         except FileNotFoundError:
             logger.error(f"❌ File not found: {file_path}")
@@ -62,23 +73,26 @@ class WellnessService:
 
         Args:
             question: User's question in Hebrew or English
-            file_id: ID of the wellness file (unused, uses self.file_content)
+            file_id: ID of the wellness file (unused, uses self.file_text)
             context: Optional context for the question
 
         Returns:
             Answer from Claude based on the wellness plan file
         """
         try:
-            if not self.file_content:
+            if not self.file_text:
                 raise ValueError("Wellness file not loaded. Call upload_file first.")
 
-            prompt = f"""אתה עוזר תכנון הרווחה של הרמן.
+            prompt = f"""אתה עוזר תכנון הרווחה של החברה.
 
 המשתמש שואל שאלה לגבי תוכנית הרווחה:
 
 {question}
 
-בנה תשובה קצרה, מדויקת והעזור בהתבסס על הקובץ שלהלן."""
+הנתונים של תוכנית הרווחה:
+{self.file_text}
+
+אנא בנה תשובה קצרה, מדויקת וברורה בהתבסס על הנתונים."""
 
             if context:
                 prompt += f"\n\nהקשר נוסף: {context}"
@@ -86,25 +100,7 @@ class WellnessService:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=1024,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "document",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    "data": self.file_content,
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": prompt,
-                            },
-                        ],
-                    }
-                ],
+                messages=[{"role": "user", "content": prompt}],
             )
 
             answer = response.content[0].text
@@ -122,7 +118,7 @@ class WellnessService:
         Generate a new wellness plan for a given year with modifications.
 
         Args:
-            file_id: ID of the wellness file template (unused, uses self.file_content)
+            file_id: ID of the wellness file template (unused)
             year: Target year for new plan
             changes: Requested changes (e.g., "add 50 NIS to each gift")
 
@@ -130,44 +126,29 @@ class WellnessService:
             Generated plan text with proposed changes
         """
         try:
-            if not self.file_content:
+            if not self.file_text:
                 raise ValueError("Wellness file not loaded. Call upload_file first.")
 
             prompt = f"""אתה מעצב תוכניות רווחה.
 
-בהתבסס על תוכנית הרווחה הקיימת בקובץ, צור תוכנית חדשה לשנת {year} עם השינויים הבאים:
+בהתבסס על תוכנית הרווחה הקיימת, צור תוכנית חדשה לשנת {year} עם השינויים הבאים:
 
 {changes}
+
+הנתונים של התוכנית הקיימת:
+{self.file_text}
 
 אנא ספק:
 1. סה"כ תקציב משוער
 2. רשימת פעילויות מוצעות עם תאריכים
-3. הערות על השינויים מהתוכנית הקודמת
+3. הערות על השינויים
 
 תן תשובה בעברית ובפורמט ברור וקל לקריאה."""
 
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=2048,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "document",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    "data": self.file_content,
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": prompt,
-                            },
-                        ],
-                    }
-                ],
+                messages=[{"role": "user", "content": prompt}],
             )
 
             plan = response.content[0].text
@@ -177,12 +158,6 @@ class WellnessService:
         except Exception as e:
             logger.error(f"❌ Error generating plan: {str(e)}")
             raise
-
-    def get_cached_file_id(self, filename: str) -> Optional[str]:
-        """Get cached file ID if available."""
-        if filename in self.file_cache:
-            return self.file_cache[filename]["file_id"]
-        return None
 
     def list_cached_files(self) -> dict:
         """List all cached wellness files."""
