@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hr_bot_db
+    environment:
+      POSTGRES_USER: hrbot
+      POSTGRES_PASSWORD: hrbot_dev_password
+      POSTGRES_DB: hr_bot_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hr_bot:
+    build: .
+    container_name: hr_bot_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://hrbot:hrbot_dev_password@postgres:5432/hr_bot_db
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      OUTLOOK_TENANT_ID: ${OUTLOOK_TENANT_ID}
+      OUTLOOK_CLIENT_ID: ${OUTLOOK_CLIENT_ID}
+      OUTLOOK_CLIENT_SECRET: ${OUTLOOK_CLIENT_SECRET}
+      OUTLOOK_REDIRECT_URI: ${OUTLOOK_REDIRECT_URI:-http://localhost:8000/auth/outlook/callback}
+      TIMEZONE: Asia/Jerusalem
+      DEBUG: ${DEBUG:-False}
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
