@@ -16,7 +16,7 @@ class WellnessService:
     def __init__(self, api_key: str):
         """Initialize Anthropic client."""
         self.client = Anthropic(api_key=api_key)
-        self.model = "claude-3-5-sonnet-20241022"
+        self.model = "claude-opus-4-7"
         self.file_cache = {}
         self.file_text = None  # Store file content as formatted text
 
