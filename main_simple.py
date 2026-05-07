@@ -249,23 +249,38 @@ async def post_init(application: Application) -> None:
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     wellness_file_path = os.getenv("WELLNESS_FILE_PATH")
 
+    logger.info(f"🔍 Checking wellness setup...")
+    logger.info(f"   ANTHROPIC_API_KEY: {'✅ Set' if anthropic_key else '❌ Not set'}")
+    logger.info(f"   WELLNESS_FILE_PATH: {wellness_file_path or '❌ Not set'}")
+
     if anthropic_key and wellness_file_path:
         try:
+            # Check if file exists
+            import os.path
+            if not os.path.exists(wellness_file_path):
+                logger.error(f"❌ File not found: {wellness_file_path}")
+                logger.error(f"   Current directory: {os.getcwd()}")
+                logger.error(f"   Files in current dir: {os.listdir('.')[:10]}")
+                return
+
             wellness_service = WellnessService(api_key=anthropic_key)
             logger.info("✅ WellnessService initialized")
 
             # Upload wellness file
+            logger.info(f"📁 Uploading file from: {wellness_file_path}")
             wellness_file_id = await wellness_service.upload_file(wellness_file_path)
-            logger.info(f"✅ Wellness file uploaded: {wellness_file_id}")
+            logger.info(f"✅ Wellness file uploaded successfully: {wellness_file_id}")
 
         except Exception as e:
-            logger.error(f"⚠️ Failed to initialize wellness service: {str(e)}")
+            logger.error(f"❌ Failed to initialize wellness service: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             wellness_service = None
     else:
         if not anthropic_key:
-            logger.warning("⚠️ ANTHROPIC_API_KEY not set - wellness features disabled")
+            logger.error("❌ ANTHROPIC_API_KEY not set - wellness features disabled")
         if not wellness_file_path:
-            logger.warning("⚠️ WELLNESS_FILE_PATH not set - wellness features disabled")
+            logger.error("❌ WELLNESS_FILE_PATH not set - wellness features disabled")
 
 def main() -> None:
     """Start the bot."""
