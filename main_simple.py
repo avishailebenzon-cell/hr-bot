@@ -3,6 +3,8 @@ Simple Telegram bot - polling mode (no database needed for initial testing)
 """
 import logging
 import os
+import os.path
+import traceback
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from services.wellness_service import WellnessService
@@ -256,7 +258,6 @@ async def post_init(application: Application) -> None:
     if anthropic_key and wellness_file_path:
         try:
             # Check if file exists
-            import os.path
             if not os.path.exists(wellness_file_path):
                 logger.error(f"❌ File not found: {wellness_file_path}")
                 logger.error(f"   Current directory: {os.getcwd()}")
@@ -273,7 +274,6 @@ async def post_init(application: Application) -> None:
 
         except Exception as e:
             logger.error(f"❌ Failed to initialize wellness service: {str(e)}")
-            import traceback
             logger.error(traceback.format_exc())
             wellness_service = None
     else:
