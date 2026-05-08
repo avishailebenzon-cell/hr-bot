@@ -42,9 +42,22 @@ TOKEN = "8769368501:AAEKmOZN47ELGOwddJHIVjijO1VjNdDyBh8"
 # Database setup
 db_url = os.getenv("DATABASE_URL")
 if db_url:
-    engine = create_engine(db_url, echo=False)
-    Base.metadata.create_all(engine)
-    logger.info(f"✅ Database connected: {db_url.split('@')[1] if '@' in db_url else 'unknown'}")
+    try:
+        # Add SSL parameter for Railway PostgreSQL
+        if "railway" in db_url.lower() or "proxy.rlwy.net" in db_url:
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg://") + "?sslmode=require"
+
+        engine = create_engine(
+            db_url,
+            echo=False,
+            pool_pre_ping=True,  # Test connection before use
+            connect_args={"timeout": 10} if "psycopg" not in db_url else {}
+        )
+        Base.metadata.create_all(engine)
+        logger.info(f"✅ Database connected successfully")
+    except Exception as e:
+        logger.error(f"❌ Database connection failed: {str(e)}")
+        engine = None
 else:
     engine = None
     logger.warning("⚠️ DATABASE_URL not set - user tracking disabled")
