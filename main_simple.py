@@ -1,13 +1,33 @@
 """
-Simple Telegram bot - polling mode (no database needed for initial testing)
+Simple Telegram bot - polling mode with multi-user Database support
 """
 import logging
 import os
 import os.path
 import traceback
+from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from services.wellness_service import WellnessService
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, select
+from sqlalchemy.orm import declarative_base, Session
+
+Base = declarative_base()
+
+
+class TelegramUser(Base):
+    """Model for storing Telegram users."""
+    __tablename__ = "telegram_users"
+
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(Integer, unique=True, nullable=False)
+    first_name = Column(String(255))
+    last_name = Column(String(255))
+    username = Column(String(255))
+    language_code = Column(String(10), default="he")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_message_at = Column(DateTime, default=datetime.utcnow)
+
 
 # Setup logging
 logging.basicConfig(
@@ -19,14 +39,58 @@ logger = logging.getLogger(__name__)
 # Telegram token
 TOKEN = "8769368501:AAEKmOZN47ELGOwddJHIVjijO1VjNdDyBh8"
 
+# Database setup
+db_url = os.getenv("DATABASE_URL")
+if db_url:
+    engine = create_engine(db_url, echo=False)
+    Base.metadata.create_all(engine)
+    logger.info(f"✅ Database connected: {db_url.split('@')[1] if '@' in db_url else 'unknown'}")
+else:
+    engine = None
+    logger.warning("⚠️ DATABASE_URL not set - user tracking disabled")
+
 # Wellness service (will be initialized in main)
 wellness_service = None
 wellness_file_id = None
+
+def register_user(telegram_user) -> None:
+    """Register or update user in database."""
+    if not engine:
+        return
+
+    try:
+        with Session(engine) as session:
+            user = session.query(TelegramUser).filter(
+                TelegramUser.telegram_id == telegram_user.id
+            ).first()
+
+            if user:
+                # Update existing user
+                user.last_message_at = datetime.utcnow()
+            else:
+                # Create new user
+                user = TelegramUser(
+                    telegram_id=telegram_user.id,
+                    first_name=telegram_user.first_name,
+                    last_name=telegram_user.last_name,
+                    username=telegram_user.username,
+                )
+                session.add(user)
+
+            session.commit()
+            logger.info(f"✅ User {telegram_user.id} registered")
+
+    except Exception as e:
+        logger.error(f"❌ Error registering user: {str(e)}")
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command"""
     user = update.effective_user
     logger.info(f"User {user.id} ({user.first_name}) started bot")
+
+    # Register user in database
+    register_user(user)
 
     await update.message.reply_html(
         f"👋 שלום {user.first_name}!\n\n"
@@ -195,8 +259,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.message or not update.message.text:
         return
 
+    user = update.effective_user
     question = update.message.text
-    user_id = update.effective_user.id
+    user_id = user.id
+
+    # Register user in database
+    register_user(user)
 
     # Only process if wellness service is available
     if not wellness_service or not wellness_file_id:
